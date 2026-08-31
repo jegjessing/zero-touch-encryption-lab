@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: zerotouch
+      POSTGRES_USER: zerotouch
+      POSTGRES_PASSWORD: zerotouch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerotouch -d zerotouch"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  classifier:
+    build: ./services/classifier
+    ports:
+      - "8080:8080"
+
+  message-api:
+    build: ./services/message-api
+    ports:
+      - "8088:8088"
+    environment:
+      CLASSIFIER_URL: http://classifier:8080
+      # Local/dev key only. In production this comes from a secret store, never git.
+      ENCRYPTION_KEY: NkQu1e2OuBuZawzLy8V+NxbporauIT4d0aH2v7N2IW0=
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: zerotouch
+      PGUSER: zerotouch
+      PGPASSWORD: zerotouch
+    depends_on:
+      classifier:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

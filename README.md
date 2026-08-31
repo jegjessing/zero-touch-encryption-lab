@@ -55,6 +55,20 @@ Both services have a small unit test (`test/`) covering the classifier rules and
 
 I have skipped validation and creating repsponse models etc. since this is a refresher for setting up Kubernetes and working with Node.js services
 
+### Containers
+
+Both services now ship with their own `Dockerfile` (`services/classifier/Dockerfile`, `services/message-api/Dockerfile`). They are deliberately boring: `node:24-alpine` for a small image, `NODE_ENV=production`, dependencies installed in their own layer _before_ the source is copied so a code change doesn't re-run `npm install`, and `USER node` so nothing runs as root inside the container. Each just `EXPOSE`s its port and starts `node src/server.js`. This is the shape I want before moving to Kubernetes — the same image runs under compose now and in a pod later, no changes.
+
+`docker-compose.yml` at the root wires the whole thing together: `postgres:16`, the classifier, and the message-api. The api is handed everything it needs through the environment — `CLASSIFIER_URL` pointing at the classifier by service name, the dev `ENCRYPTION_KEY`, and the `PG*` connection details — and `depends_on` with `condition: service_healthy` makes it wait for the database's `pg_isready` healthcheck to pass before it starts, so there is no start-up race. Postgres data lives in a named `pgdata` volume so rows survive a `docker compose down`. The `ENCRYPTION_KEY` in there is a throwaway local key on purpose; in production it comes from a secret store, never from git.
+
+### Persistence (Postgres)
+
+The messages now actually get stored. `message-api` talks to a **PostgreSQL 16** instance through a small `pg` pool in `services/message-api/src/db.js`, and `docker-compose.yml` brings the database up alongside the two services (with a `pg_isready` healthcheck so the api waits until it can actually connect).
+
+On startup the api pings the database and runs a create-if-not-exists bootstrap of a single `messages` table — no migration tool yet, just enough to keep the pod self-sufficient on first start; a real migration tool (e.g. `node-pg-migrate`) is a Step 2+ concern. Every `POST /messages` now writes a row and returns the generated `id` and `createdAt` alongside the classification. The split I care about: a **sensitive** message is stored as ciphertext only (`body_cipher`, `body_iv`, `body_tag`) and the plaintext is never written; a non-sensitive one is stored as `body_plain`. So the encrypt-at-rest promise holds all the way down to the row.
+
+Connection details come from the environment (`PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`) with sane local defaults — same pattern as `ENCRYPTION_KEY`, so this moves to a Kubernetes Secret later.
+
 ## Step 2
 
 Add the PostgresSQL and the Kubernetes implementation
