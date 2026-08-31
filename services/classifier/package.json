@@ -1,0 +1,17 @@
+{
+  "name": "zerotouch-classifier",
+  "version": "1.0.0",
+  "description": "Zero-Touch style content classifier — decides whether a message contains sensitive data and must be encrypted.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
