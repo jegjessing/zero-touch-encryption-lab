@@ -69,6 +69,33 @@ On startup the api pings the database and runs a create-if-not-exists bootstrap 
 
 Connection details come from the environment (`PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`) with sane local defaults — same pattern as `ENCRYPTION_KEY`, so this moves to a Kubernetes Secret later.
 
+### Reading messages back
+
+Now that rows are stored, `message-api` can hand them back out. Two read endpoints sit next to `POST /messages`:
+
+- `GET /messages` lists the most recent messages (newest first, capped at 100). It returns **metadata only** — `id`, recipient, subject, `sensitive`, `confidence`, `categories`, `encrypted`, `createdAt` — and deliberately never the body, so listing can't leak content whether it was encrypted or not.
+- `GET /messages/:id` reads a single message back and includes the body. This is the one place decryption happens: if the row was stored encrypted, it is decrypted on the way out (`body_cipher`/`body_iv`/`body_tag` → plaintext) using the same `ENCRYPTION_KEY`; a non-sensitive row just returns its `body_plain`. An unknown id gives a 404.
+
+So the round trip is complete — a sensitive message goes in, is stored as ciphertext only, and comes back as readable text without the plaintext ever touching the database. Decrypting on read is a convenience for the lab; a real system would gate this behind auth and think hard about who is allowed to see a decrypted body.
+
+The Postman collection has grown to match. Alongside the original `POST /messages` happy/not-so-happy cases it now covers the two read endpoints — listing, reading a plaintext message back, and reading a sensitive one back (which decrypts) — plus the 404s for an unknown id and an unknown route. There is also a small **Classifier (direct)** folder that hits `POST /classify` on its own (sensitive text, plain text below threshold, and missing text), handy for poking at the classifier without going through the api. The create requests save the returned `id` into collection variables so the read requests can use them.
+
+```
+                    localhost:8088
+                         │
+                         ▼
+                 ┌───────────────┐   POST /classify    ┌──────────────┐
+   client  ────► │  message-api  │ ──────────────────► │  classifier  │
+                 │               │ ◄────────────────── │   stateless  │
+                 └──────┬────────┘   {sensitive,...}   └──────────────┘
+                        │ encrypt body if sensitive (AES-256-GCM)
+                        ▼
+                 ┌───────────────┐
+                 │   Postgres    │  body stored as ciphertext when sensitive
+                 │               │
+                 └───────────────┘
+```
+
 ## Step 2
 
 Add the PostgresSQL and the Kubernetes implementation

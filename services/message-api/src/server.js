@@ -1,7 +1,7 @@
 // Server instance for the message service.
 // At the moment I will just implement a single POST endpoint that accepts a message, classifies it, and encrypts it if necessary.
 import express from "express";
-import { encrypt } from "./crypto.js";
+import { encrypt, decrypt } from "./crypto.js";
 import { pool, migrate, ping } from "./db.js";
 
 //I will use Express to create a simple REST API for the message service.
@@ -87,6 +87,39 @@ app.post("/messages", async (req, res) => {
   });
 });
 
+// List (metadata only, never the body
+// And now this would be a good time to implement a response object that contains the message metadata.
+// I will leave this out for now, but in a real application, I would want create a standard object and populate and return that.
+app.get("/messages", async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, recipient, subject, sensitive, confidence, categories, encrypted, created_at
+     FROM messages ORDER BY id DESC LIMIT 100`,
+  );
+  res.json(rows);
+});
+
+// Read one back, decrypts on the way out
+app.get("/messages/:id", async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM messages WHERE id = $1", [req.params.id]);
+  if (rows.length === 0) return res.status(404).json({ error: "not found" });
+
+  const m = rows[0];
+  const body = m.encrypted
+    ? decrypt({ ciphertext: m.body_cipher, iv: m.body_iv, authTag: m.body_tag })
+    : m.body_plain;
+
+  res.json({
+    id: m.id,
+    recipient: m.recipient,
+    subject: m.subject,
+    sensitive: m.sensitive,
+    confidence: m.confidence,
+    categories: m.categories,
+    encrypted: m.encrypted,
+    body,
+    createdAt: m.created_at,
+  });
+});
 // ---- startup -------------------------------------------------------------
 const port = Number(process.env.PORT || 8088);
 
