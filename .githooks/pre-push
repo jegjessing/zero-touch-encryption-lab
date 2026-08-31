@@ -1,0 +1,18 @@
+#!/bin/sh
+# Runs formatting/lint checks and the test suite before allowing a push.
+# Any failure aborts the push so broken or unformatted code never leaves the machine.
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+echo "pre-push: checking formatting (prettier)…"
+npm run --silent format:check
+
+echo "pre-push: linting (eslint)…"
+npm run --silent lint
+
+echo "pre-push: running tests…"
+npm test --silent
+
+echo "pre-push: all checks passed."

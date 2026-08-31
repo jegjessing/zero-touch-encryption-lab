@@ -1,0 +1,253 @@
+{
+  "info": {
+    "_postman_id": "a82f51eb-ab99-41fe-8913-7241018d1f5a",
+    "name": "Zerotouch Lab — message-api",
+    "description": "Functional tests for the Zero Touch services.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Happy path",
+      "item": [
+        {
+          "name": "POST /messages — non-sensitive (stays plaintext)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('has id + createdAt', () => { pm.expect(b).to.have.property('id'); pm.expect(b).to.have.property('createdAt'); });",
+                  "pm.test('not flagged sensitive', () => pm.expect(b.classification.sensitive).to.be.false);",
+                  "pm.test('not encrypted', () => pm.expect(b.encrypted).to.be.false);",
+                  "pm.test('recommendedAction = send-plain', () => pm.expect(b.classification.recommendedAction).to.eql('send-plain'));",
+                  "pm.collectionVariables.set('plainId', String(b.id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient\": \"team@firma.dk\",\n  \"subject\": \"Frokost\",\n  \"body\": \"Vi ses til frokost kl 12 i kantinen.\"\n}"
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /messages — sensitive (CPR → encrypted)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('flagged sensitive', () => pm.expect(b.classification.sensitive).to.be.true);",
+                  "pm.test('encrypted at rest', () => pm.expect(b.encrypted).to.be.true);",
+                  "pm.test('recommendedAction = encrypt', () => pm.expect(b.classification.recommendedAction).to.eql('encrypt'));",
+                  "pm.test('cpr among categories', () => pm.expect(b.classification.categories).to.include('cpr'));",
+                  "pm.test('confidence >= 0.8', () => pm.expect(b.classification.confidence).to.be.at.least(0.8));",
+                  "pm.collectionVariables.set('sensitiveId', String(b.id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient\": \"sagsbehandler@kommune.dk\",\n  \"subject\": \"Din sag\",\n  \"body\": \"Hej, din klient har CPR 010203-1234 og skal have svar.\"\n}"
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Not-so-happy path",
+      "item": [
+        {
+          "name": "POST /messages — missing body field (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('explains required fields', () => pm.expect(pm.response.json().error).to.match(/required/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient\": \"team@firma.dk\",\n  \"subject\": \"No body here\"\n}"
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /messages — missing recipient + subject (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"orphan body with no recipient or subject\"\n}"
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /messages — body is not a string (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request (body must be a string)', () => pm.response.to.have.status(400));",
+                  "// server guards with typeof body !== 'string', so a number/object is rejected."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient\": \"team@firma.dk\",\n  \"subject\": \"Typed wrong\",\n  \"body\": 12345\n}"
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /messages — empty JSON object (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /messages — malformed JSON (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request (JSON parse error)', () => pm.response.to.have.status(400));",
+                  "// express.json() rejects a syntactically invalid payload before the route runs."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"recipient\": \"a@b.dk\", \"subject\": \"oops\", "
+            },
+            "url": "{{baseUrl}}/messages"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "classifierUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "plainId",
+      "value": ""
+    },
+    {
+      "key": "sensitiveId",
+      "value": ""
+    }
+  ]
+}
