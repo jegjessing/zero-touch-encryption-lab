@@ -8,6 +8,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
+    "deps:check": "node scripts/check-deps.mjs",
     "test": "npm test --prefix services/classifier && npm test --prefix services/message-api"
   },
   "engines": {

@@ -12,6 +12,9 @@ npm run --silent format:check
 echo "pre-push: linting (eslint)…"
 npm run --silent lint
 
+echo "pre-push: checking declared dependencies…"
+npm run --silent deps:check
+
 echo "pre-push: running tests…"
 npm test --silent
 
