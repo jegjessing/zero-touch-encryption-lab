@@ -414,7 +414,11 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Host", "value": "api.zerotouch.local" }],
-            "url": { "raw": "{{ingressUrl}}/healthz", "host": ["{{ingressUrl}}"], "path": ["healthz"] }
+            "url": {
+              "raw": "{{ingressUrl}}/healthz",
+              "host": ["{{ingressUrl}}"],
+              "path": ["healthz"]
+            }
           }
         },
         {
@@ -469,7 +473,11 @@
               "mode": "raw",
               "raw": "{\n  \"recipient\": \"sagsbehandler@kommune.dk\",\n  \"subject\": \"Via ingress\",\n  \"body\": \"Hej fra ingress, klientens CPR er 010203-1234.\"\n}"
             },
-            "url": { "raw": "{{ingressUrl}}/messages", "host": ["{{ingressUrl}}"], "path": ["messages"] }
+            "url": {
+              "raw": "{{ingressUrl}}/messages",
+              "host": ["{{ingressUrl}}"],
+              "path": ["messages"]
+            }
           }
         }
       ]

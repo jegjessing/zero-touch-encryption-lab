@@ -462,16 +462,16 @@ securityContext: # pod- or container-level hardening
 
 ## 15. Debugging playbook (symptom → cause → move)
 
-| Symptom                           | Likely cause                                        | First move                               |
-| --------------------------------- | --------------------------------------------------- | ---------------------------------------- |
-| `CrashLoopBackOff`                | app exits on boot (bad config, dep down)            | `logs --previous`; `describe`            |
-| `ImagePullBackOff`/`ErrImagePull` | wrong image / not loaded / no auth                  | check tag; `kind load`; imagePullSecrets |
-| `Pending`                         | no schedulable node / unbound PVC / too-big request / nodeSelector unmatched (e.g. `ingress-ready`) | `describe pod` events; check labels/quotas/SC   |
-| `OOMKilled` (exit 137)            | memory over limit                                   | raise limit or fix leak; `kubectl top`   |
-| Ready 0/1, Running                | readiness failing (dep down)                        | hit `/readyz`; check the dependency      |
-| Service returns nothing           | selector≠labels, or 0 Ready endpoints               | `get endpointslices`; check labels       |
-| HPA `TARGETS <unknown>`           | no metrics-server / no CPU request                  | install metrics-server; add requests     |
-| DNS fails                         | wrong name/namespace                                | `exec -- getent hosts <svc>`; use FQDN   |
+| Symptom                           | Likely cause                                                                                        | First move                                    |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `CrashLoopBackOff`                | app exits on boot (bad config, dep down)                                                            | `logs --previous`; `describe`                 |
+| `ImagePullBackOff`/`ErrImagePull` | wrong image / not loaded / no auth                                                                  | check tag; `kind load`; imagePullSecrets      |
+| `Pending`                         | no schedulable node / unbound PVC / too-big request / nodeSelector unmatched (e.g. `ingress-ready`) | `describe pod` events; check labels/quotas/SC |
+| `OOMKilled` (exit 137)            | memory over limit                                                                                   | raise limit or fix leak; `kubectl top`        |
+| Ready 0/1, Running                | readiness failing (dep down)                                                                        | hit `/readyz`; check the dependency           |
+| Service returns nothing           | selector≠labels, or 0 Ready endpoints                                                               | `get endpointslices`; check labels            |
+| HPA `TARGETS <unknown>`           | no metrics-server / no CPU request                                                                  | install metrics-server; add requests          |
+| DNS fails                         | wrong name/namespace                                                                                | `exec -- getent hosts <svc>`; use FQDN        |
 
 Universal first three moves: `kubectl describe <obj>` (read the **Events**),
 `kubectl logs [--previous]`, `kubectl get events --sort-by=.lastTimestamp`.
