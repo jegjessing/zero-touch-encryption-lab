@@ -3,9 +3,25 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: zerotouch-lab
 nodes:
   - role: control-plane
-    # Map the message-api NodePort (30080) to localhost:8080 on your machine so
-    # you can `curl localhost:8080` without port-forwarding.
+    # Label the node so the ingress-nginx controller (which has a
+    # nodeSelector: ingress-ready=true) will schedule here.
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
     extraPortMappings:
+      # Ingress: reach the controller on localhost:8081 (HTTP) / :8443 (HTTPS).
+      # Host ports 8081/8443 (not 80/443) to avoid colliding with anything on :80.
+      - containerPort: 80
+        hostPort: 8081
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+      # NodePort: reach the message-api Service directly on localhost:8080
+      # (kept alongside the Ingress as the "quick" entrypoint).
       - containerPort: 30080
         hostPort: 8080
         protocol: TCP

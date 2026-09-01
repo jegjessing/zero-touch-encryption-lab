@@ -5,7 +5,7 @@ CLUSTER := zerotouch-lab
 KUBECTL := kubectl --context kind-$(CLUSTER)
 NS := zerotouch-lab
 
-up: cluster build load deploy wait ## full setup from scratch
+up: cluster build load deploy wait ingress test## full setup from scratch
 
 cluster: ## create the kind cluster (idempotent)
 	@kind get clusters | grep -qx $(CLUSTER) || kind create cluster --config kind-config.yaml
@@ -35,7 +35,28 @@ dashboard: ## print the Headlamp login token and the URL to open
 
 test: ## run the smoke test against localhost:8080
 	./scripts/smoke-test.sh
-	
+
+ingress: ## install ingress-nginx, generate a self-signed TLS cert, apply the Ingress
+	$(KUBECTL) apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+	$(KUBECTL) -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
+	$(KUBECTL) apply -f k8s/00-namespace.yaml
+	@if $(KUBECTL) -n $(NS) get secret api-tls >/dev/null 2>&1; then \
+	  echo "secret api-tls already exists"; \
+	else \
+	  tmp=$$(mktemp -d); \
+	  openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+	    -keyout $$tmp/tls.key -out $$tmp/tls.crt \
+	    -subj "/CN=api.zerotouch.local/O=zerotouch" \
+	    -addext "subjectAltName=DNS:api.zerotouch.local" 2>/dev/null; \
+	  $(KUBECTL) -n $(NS) create secret tls api-tls --cert=$$tmp/tls.crt --key=$$tmp/tls.key; \
+	  rm -rf $$tmp; echo "created self-signed secret api-tls"; \
+	fi
+	$(KUBECTL) apply -f k8s/50-ingress.yaml
+	@echo "Ingress ready. Test with 'make ingress-test' (https://localhost:8443, Host: api.zerotouch.local)."
+
+ingress-test: ## verify traffic reaches message-api through the Ingress over TLS
+	./scripts/ingress-smoke.sh
+
 redeploy: build load ## rebuild + restart after a code change
 	$(KUBECTL) -n $(NS) rollout restart deploy/classifier deploy/message-api
 	$(KUBECTL) -n $(NS) rollout status  deploy/classifier deploy/message-api

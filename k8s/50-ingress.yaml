@@ -1,0 +1,30 @@
+# Prod-shaped HTTP(S) entrypoint (KR-8). Routes host api.zerotouch.local to the
+# message-api Service and terminates TLS with a self-signed cert.
+#
+# The referenced Secret `api-tls` is NOT in git — it is generated at deploy time
+# (`make ingress`, or the CI step) so no private key is committed (KR-10 / SR-2).
+# Until that Secret and the ingress-nginx controller exist, this object is inert.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: message-api
+  namespace: zerotouch-lab
+  annotations:
+    # Force HTTP -> HTTPS (nginx returns 308 on :80).
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api.zerotouch.local]
+      secretName: api-tls
+  rules:
+    - host: api.zerotouch.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: message-api
+                port:
+                  number: 80 # the message-api Service port (targetPort 8080)

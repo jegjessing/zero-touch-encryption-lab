@@ -2,12 +2,14 @@
   "info": {
     "name": "Zerotouch Lab — message-api",
     "_postman_id": "b3a1e6d0-0000-4000-8000-zerotouchlab01",
-    "description": "Functional tests for the Zero-Touch encryption message-api (and its downstream classifier).\n\nCovers the happy path (classify → encrypt/plain → store → read back) and the not-so-happy path (validation errors, missing resources, malformed input).\n\nImport the accompanying environment file `zerotouch.postman_environment.json` and pick it in the environment selector. Variables:\n- `baseUrl` — message-api (default http://localhost:8080)\n- `classifierUrl` — classifier, exposed for direct testing (default http://localhost:8081)\n\nSome requests store variables (`plainId`, `sensitiveId`) so later requests can read them back — run the folders top-to-bottom, or use the Collection Runner.",
+    "description": "Functional tests for the Zero-Touch encryption message-api (and its downstream classifier).\n\nCovers the happy path (classify → encrypt/plain → store → read back), the not-so-happy path (validation errors, missing resources, malformed input), and the same traffic reaching message-api THROUGH the Kubernetes Ingress over TLS.\n\nImport the accompanying environment file `zerotouch.postman_environment.json` and pick it in the environment selector. Variables:\n- `baseUrl` — message-api via NodePort (default http://localhost:8080)\n- `classifierUrl` — classifier, exposed for direct testing (default http://localhost:8080)\n- `ingressUrl` — message-api via the Ingress over HTTPS (default https://localhost:8443)\n- `ingressHttpUrl` — the plain-HTTP Ingress port, used to prove the HTTP→HTTPS redirect (default http://localhost:8081)\n\nFor the 'Via Ingress (TLS)' folder two Postman settings matter: the cert is self-signed, so turn OFF Settings → General → 'SSL certificate verification'; and every Ingress request carries a 'Host: api.zerotouch.local' header (there is no real DNS) so nginx matches the routing rule.\n\nSome requests store variables (`plainId`, `sensitiveId`) so later requests can read them back — run the folders top-to-bottom, or use the Collection Runner.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:8080" },
-    { "key": "classifierUrl", "value": "http://localhost:8080" }
+    { "key": "classifierUrl", "value": "http://localhost:8080" },
+    { "key": "ingressUrl", "value": "https://localhost:8443" },
+    { "key": "ingressHttpUrl", "value": "http://localhost:8081" }
   ],
   "item": [
     {
@@ -387,6 +389,87 @@
               "host": ["{{classifierUrl}}"],
               "path": ["classify"]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Via Ingress (TLS)",
+      "description": "The same message-api, but reached through the ingress-nginx Ingress that terminates TLS and routes host api.zerotouch.local. Requires the Ingress to be up (`make ingress`). Turn OFF SSL certificate verification in Postman settings — the cert is self-signed.",
+      "item": [
+        {
+          "name": "GET /healthz — health through the Ingress (HTTPS)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK over TLS', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "api.zerotouch.local" }],
+            "url": { "raw": "{{ingressUrl}}/healthz", "host": ["{{ingressUrl}}"], "path": ["healthz"] }
+          }
+        },
+        {
+          "name": "GET /healthz — plain HTTP redirects to HTTPS (308)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('redirected to HTTPS', () => pm.expect([301,302,307,308]).to.include(pm.response.code));",
+                  "// nginx ssl-redirect: plain HTTP is bounced to HTTPS before reaching the app.",
+                  "// Postman follows redirects by default — turn off 'Automatically follow redirects' to see the 308."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Host", "value": "api.zerotouch.local" }],
+            "url": {
+              "raw": "{{ingressHttpUrl}}/healthz",
+              "host": ["{{ingressHttpUrl}}"],
+              "path": ["healthz"]
+            }
+          }
+        },
+        {
+          "name": "POST /messages — sensitive through the Ingress (end-to-end)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('flagged sensitive', () => pm.expect(b.classification.sensitive).to.be.true);",
+                  "pm.test('encrypted at rest', () => pm.expect(b.encrypted).to.be.true);",
+                  "pm.test('cpr among categories', () => pm.expect(b.classification.categories).to.include('cpr'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "Host", "value": "api.zerotouch.local" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient\": \"sagsbehandler@kommune.dk\",\n  \"subject\": \"Via ingress\",\n  \"body\": \"Hej fra ingress, klientens CPR er 010203-1234.\"\n}"
+            },
+            "url": { "raw": "{{ingressUrl}}/messages", "host": ["{{ingressUrl}}"], "path": ["messages"] }
           }
         }
       ]

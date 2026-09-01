@@ -145,7 +145,21 @@ There is, however, a **fictitious `deploy` job left commented out** at the botto
 
 ## Step 3
 
-Implement an Ingress
+The message-api now sits behind a real **Ingress** instead of only a raw NodePort, so it's reached the way a production service would be: one HTTP(S) front door, host-based routing, and TLS terminated at the edge. I'm using [ingress-nginx](https://kubernetes.github.io/ingress-nginx/) as the controller — it's the closest local stand-in for a cloud ingress (on AKS this would be the Application Gateway Ingress Controller).
+
+- **The controller** — `make ingress` installs ingress-nginx from the upstream kind manifest and waits for it to roll out. On kind the controller runs as a DaemonSet pinned to a node labelled `ingress-ready=true` and listens on the node's ports 80/443.
+- **The Ingress** (`k8s/50-ingress.yaml`) — routes host `api.zerotouch.local` to the `message-api` Service (port 80 → container 8080), terminates TLS with the `api-tls` Secret, and forces HTTP → HTTPS with a 308 via the `nginx.ingress.kubernetes.io/ssl-redirect` annotation.
+- **TLS without committing a key** — the self-signed cert and key are generated at deploy time by `make ingress` (`openssl req -x509 …`) and loaded into the cluster as the `api-tls` Secret. The private key never touches git — same discipline as `ENCRYPTION_KEY` and `PGPASSWORD`. The manifest references the Secret by name, so until it exists the Ingress is simply inert.
+- **Host port mappings** — `kind-config.yaml` now maps the controller's 80/443 to **`localhost:8081`** (HTTP) and **`localhost:8443`** (HTTPS). I used 8081/8443 rather than 80/443 so it doesn't collide with anything already on the privileged ports. The old message-api NodePort → `localhost:8080` is kept alongside as the "quick" entrypoint.
+
+### Reaching it
+
+```
+   curl -k https://localhost:8443/healthz   -H 'Host: api.zerotouch.local'   # through the Ingress, TLS
+   curl     http://localhost:8081/healthz    -H 'Host: api.zerotouch.local'   # 308 redirect to HTTPS
+```
+
+Because there's no real DNS for `api.zerotouch.local`, the requests carry an explicit `Host:` header (or you can add it to `/etc/hosts`). `-k` is needed because the cert is self-signed. `make ingress-test` runs `scripts/ingress-smoke.sh`, which proves all three things end-to-end: HTTPS health works through the Ingress, plain HTTP redirects, and a full `POST /messages` round-trips over TLS.
 
 ## Step 4
 
