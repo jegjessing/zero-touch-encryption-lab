@@ -127,7 +127,21 @@ Both Node services now expose `/healthz` and `/readyz` (`services/*/src/server.j
 - **Liveness** (`/healthz`) only answers "is the process up?" — it deliberately does **not** touch Postgres. If the database blips, we want Kubernetes to keep the pod and let it retry, not kill and restart it.
 - **Readiness** (`/readyz`) decides whether the pod should receive traffic. The classifier has no downstream dependency, so ready == alive. The message-api's readiness actually pings Postgres and returns 503 if it can't reach it, so a pod is only sent requests once it can really serve them.
 
-# If there is time
+### CI
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the whole thing on every push and pull request, in four jobs:
+
+- **lint** — the same checks as the local pre-push hook: `prettier --check`, `eslint`, and the declared-dependency check. So formatting or lint slips are caught in CI, not just on my machine.
+- **test** — the unit tests, as a matrix over both services.
+- **e2e** — the interesting one. It builds both images, spins up a real **kind** cluster (using the same `kind-config.yaml`), applies all the `k8s/` manifests, waits for every deployment to roll out, and then runs `scripts/smoke-test.sh` against `localhost:8080`. That script proves the full classify → encrypt → store → decrypt round-trip and even `exec`s into Postgres to show the sensitive body really is ciphertext at rest. On failure it dumps pod state and logs for debugging. So the same `make up` path I run locally is exercised end-to-end in CI.
+
+### CD
+
+**publish** — only on a push to `main`, and only after the other three pass: it builds both images and pushes them to GHCR tagged with `latest` and the commit SHA.
+
+There is no real continuous _deployment_ step — nothing rolls those images out to a live cluster, because there isn't a persistent one; this is a lab. The images in the registry are where the pipeline stops on purpose.
+
+There is, however, a **fictitious `deploy` job left commented out** at the bottom of the workflow, so the shape of a real CD step is visible without actually running. If there were a persistent cluster it would: run after `publish` behind a protected `production` environment (required reviewers, wait timers), point `kubectl` at the cluster via a base64 `KUBE_CONFIG` secret scoped to a least-privilege deploy service account, then `kubectl set image` the deployments to the exact **commit-SHA tag** that `publish` just pushed — so the rollout is tied to a specific commit rather than a floating `latest` — and finally `rollout status` with a `rollout undo` to auto-roll-back if the new image never becomes healthy. To turn it on you'd uncomment it and add the secret; everything else is already wired.
 
 ## Step 3
 

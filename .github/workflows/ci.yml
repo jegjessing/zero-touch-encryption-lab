@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install root dev tooling
+        run: npm install --no-audit --no-fund
+      - name: Check formatting (prettier)
+        run: npm run format:check
+      - name: Lint (eslint)
+        run: npm run lint
+      - name: Check declared dependencies
+        run: npm run deps:check
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [classifier, message-api]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install deps
+        working-directory: services/${{ matrix.service }}
+        run: npm install --no-audit --no-fund
+      - name: Run tests
+        working-directory: services/${{ matrix.service }}
+        run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build service images
+        run: |
+          docker build -t zerotouch/classifier:dev  services/classifier
+          docker build -t zerotouch/message-api:dev  services/message-api
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: zerotouch-lab
+          config: kind-config.yaml
+
+      - name: Load images into the cluster
+        run: |
+          kind load docker-image zerotouch/classifier:dev  --name zerotouch-lab
+          kind load docker-image zerotouch/message-api:dev  --name zerotouch-lab
+
+      - name: Deploy
+        run: |
+          kubectl apply -f k8s/00-namespace.yaml
+          kubectl apply -f k8s/
+
+      - name: Wait for rollout
+        run: |
+          kubectl -n zerotouch-lab rollout status deploy/postgres    --timeout=120s
+          kubectl -n zerotouch-lab rollout status deploy/classifier  --timeout=120s
+          kubectl -n zerotouch-lab rollout status deploy/message-api --timeout=120s
+
+      - name: End-to-end smoke test
+        run: ./scripts/smoke-test.sh
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n zerotouch-lab get pods -o wide || true
+          kubectl -n zerotouch-lab describe pods || true
+          kubectl -n zerotouch-lab logs -l app=message-api --tail=100 || true
+  publish:
+    runs-on: ubuntu-latest
+    needs: [lint, test, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lowercase owner for GHCR
+        id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push
+        run: |
+          OWNER=${{ steps.owner.outputs.name }}
+          SHA=${GITHUB_SHA::7}
+          for svc in classifier message-api; do
+            img=ghcr.io/$OWNER/zerotouch-$svc
+            docker build -t "$img:latest" -t "$img:$SHA" "services/$svc"
+            docker push "$img:latest"
+            docker push "$img:$SHA"
+          done
+  # ---------------------------------------------------------------------------
+  # deploy (FICTITIOUS — intentionally commented out)
+  #
+  # There is no persistent cluster in this lab, so the pipeline stops at
+  # `publish`. This is roughly how a real continuous-deployment step would look:
+  # take the images we just pushed (tagged with the commit SHA) and roll them
+  # out to a live cluster. Enable it by uncommenting and wiring up the secrets.
+  #
+  # deploy:
+  #   runs-on: ubuntu-latest
+  #   needs: [publish]
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   # A GitHub "environment" gives you protection rules (required reviewers,
+  #   # wait timers) and a place to scope the deploy secrets to.
+  #   environment: production
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     # Point kubectl at the real cluster. KUBE_CONFIG is a repo/environment
+  #     # secret holding a base64-encoded kubeconfig for a deploy service account
+  #     # (least privilege — only what it needs in the zerotouch-lab namespace).
+  #     - name: Configure kubectl
+  #       run: |
+  #         mkdir -p "$HOME/.kube"
+  #         echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
+  #
+  #     # Pin the deployments to the exact images this run just published, so the
+  #     # rollout is tied to the commit rather than a floating :latest.
+  #     - name: Roll out the new images
+  #       run: |
+  #         OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+  #         SHA=${GITHUB_SHA::7}
+  #         kubectl -n zerotouch-lab set image deploy/classifier \
+  #           classifier=ghcr.io/$OWNER/zerotouch-classifier:$SHA
+  #         kubectl -n zerotouch-lab set image deploy/message-api \
+  #           message-api=ghcr.io/$OWNER/zerotouch-message-api:$SHA
+  #
+  #     # Wait for the rollout and auto-undo if it never becomes healthy, so a
+  #     # bad image doesn't leave the cluster wedged.
+  #     - name: Wait for rollout (rollback on failure)
+  #       run: |
+  #         kubectl -n zerotouch-lab rollout status deploy/classifier  --timeout=120s
+  #         kubectl -n zerotouch-lab rollout status deploy/message-api --timeout=120s
+  #       # - name: Rollback
+  #       #   if: failure()
+  #       #   run: |
+  #       #     kubectl -n zerotouch-lab rollout undo deploy/classifier
+  #       #     kubectl -n zerotouch-lab rollout undo deploy/message-api
+  # ---------------------------------------------------------------------------
