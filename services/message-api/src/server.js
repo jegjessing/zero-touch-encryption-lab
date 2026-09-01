@@ -15,6 +15,21 @@ const CLASSIFIER_URL = process.env.CLASSIFIER_URL || "http://localhost:8080";
 //    recipient, subject, and body of the message.
 // The route will classify the message using the classifier service, and if the message is sensitive,
 // it will encrypt the body before storing it in the database.
+
+// ---- health probes -------------------------------------------------------
+// Liveness must NOT depend on Postgres — if the DB blips we want k8s to keep the
+// pod (and retry), not kill it. Readiness DOES check the DB so traffic only
+// arrives when we can actually serve it.
+app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+app.get("/readyz", async (_req, res) => {
+  try {
+    await ping();
+    res.json({ status: "ready" });
+  } catch (err) {
+    res.status(503).json({ status: "not-ready", error: err.message });
+  }
+});
+
 app.post("/messages", async (req, res) => {
   const { recipient, subject, body } = req.body || {};
   if (!recipient || !subject || typeof body !== "string") {

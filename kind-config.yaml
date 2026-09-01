@@ -1,0 +1,15 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: zerotouch-lab
+nodes:
+  - role: control-plane
+    # Map the message-api NodePort (30080) to localhost:8080 on your machine so
+    # you can `curl localhost:8080` without port-forwarding.
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+      # Same trick for the Headlamp dashboard (30090) -> localhost:8090.
+      - containerPort: 30090
+        hostPort: 8090
+        protocol: TCP

@@ -6,6 +6,12 @@ import { classify } from "./classify.js";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
+// Liveness: is the process up?
+app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+
+// Readiness: this service has no downstream deps, so ready == alive.
+app.get("/readyz", (_req, res) => res.json({ status: "ready" }));
+
 app.post("/classify", (req, res) => {
   const text = typeof req.body?.text === "string" ? req.body.text : "";
   const result = classify(text);

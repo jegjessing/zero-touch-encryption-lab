@@ -1,0 +1,77 @@
+# We will now install a headlamp dashboard in the cluster, so we can see what is going on.
+# I'm pretty new to this, so a UI is helpful.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-admin
+  namespace: zerotouch-lab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin # lab only — full read/write so the UI is useful out of the box
+subjects:
+  - kind: ServiceAccount
+    name: headlamp-admin
+    namespace: zerotouch-lab
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: zerotouch-lab
+spec:
+  replicas: 1 # stateless UI, one is plenty for a local lab
+  selector:
+    matchLabels:
+      app: headlamp
+  template:
+    metadata:
+      labels:
+        app: headlamp
+    spec:
+      containers:
+        - name: headlamp
+          image: ghcr.io/headlamp-k8s/headlamp:v0.25.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-in-cluster" # read the API server via the pod's in-cluster config
+            - "-plugins-dir=/headlamp/plugins"
+          ports:
+            - containerPort: 4466
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4466
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4466
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: zerotouch-lab
+spec:
+  type: NodePort
+  selector:
+    app: headlamp
+  ports:
+    - port: 80
+      targetPort: 4466
+      nodePort: 30090 # kind maps this to localhost:8090

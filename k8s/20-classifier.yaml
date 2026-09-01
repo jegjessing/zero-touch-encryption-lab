@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: classifier
+  namespace: zerotouch-lab
+spec:
+  replicas: 2 # stateless, so we can run several and let the Service load-balance
+  selector:
+    matchLabels:
+      app: classifier
+  template:
+    metadata:
+      labels:
+        app: classifier
+    spec:
+      containers:
+        - name: classifier
+          image: zerotouch/classifier:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: classifier
+  namespace: zerotouch-lab
+spec:
+  selector:
+    app: classifier
+  ports:
+    - port: 8081 # the message-api talks to http://classifier:8081
+      targetPort: 8080
