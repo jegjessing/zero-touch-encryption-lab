@@ -98,7 +98,34 @@ The Postman collection has grown to match. Alongside the original `POST /message
 
 ## Step 2
 
-Add the PostgresSQL and the Kubernetes implementation
+The whole thing now runs on **Kubernetes** instead of docker-compose. Same three containers (classifier, message-api, Postgres), but described as manifests under `k8s/` and driven by a `Makefile` so the setup is one command. I'm using [kind](https://kind.sigs.k8s.io/) so the cluster is local and throwaway.
+
+### One command to stand it up
+
+`make up` runs the full path from nothing to a working cluster: create the kind cluster → build both images → load them into the cluster → apply the manifests → wait for every deployment to be available. There's no image registry involved — `kind load docker-image` pushes the locally built images straight into the node, so `imagePullPolicy: IfNotPresent` finds them without ever reaching out to a registry. Other handy targets: `make status` (pods/services/deployments in the namespace), `make down` (delete the whole cluster), and `make help` to list them.
+
+Everything lives in its own `zerotouch-lab` namespace (`k8s/00-namespace.yaml`) so it's easy to see and easy to delete.
+
+### The manifests
+
+- **Postgres** (`k8s/10-postgres.yaml`) — a Deployment backed by a `PersistentVolumeClaim` so rows survive a pod restart, with `strategy: Recreate` because a single-writer DB on an RWO volume must never run two pods at once. The password comes from a `Secret`, and `pg_isready` is wired up as both the readiness and liveness probe. It's exposed to the other pods via a ClusterIP `Service` named `postgres`.
+- **classifier** (`k8s/20-classifier.yaml`) — stateless, so it runs `replicas: 2` and lets the Service load-balance across them. Its `Service` listens on port 8081 and targets the container's 8080, which is why the api reaches it at `http://classifier:8081`.
+- **message-api** (`k8s/30-message-api.yaml`) — `replicas: 2`, config split the Kubernetes-idiomatic way: non-secret settings (`PGHOST`, `PGDATABASE`, `CLASSIFIER_URL`, …) come from a `ConfigMap` via `envFrom`, while the `ENCRYPTION_KEY` and `PGPASSWORD` come from a `Secret`. This is the payoff of the earlier "everything through the environment" design — the same image that ran under compose runs here unchanged, only the source of the values moved. It's published with a `NodePort` (30080) so it's reachable from the host.
+- **dashboard** (`k8s/40-dashboard.yaml`) — a [Headlamp](https://headlamp.dev/) UI so I can actually *see* what the cluster is doing, since I'm new to this. It's given `cluster-admin` via a ClusterRoleBinding (lab only — full access so the UI is useful out of the box) and exposed on `NodePort` 30090.
+
+### Getting to it from the host
+
+`kind-config.yaml` maps two NodePorts to `localhost` so there's no `kubectl port-forward` to keep alive:
+
+- message-api `30080` → **`localhost:8080`** — so `curl localhost:8080/messages` just works. (Note: under Kubernetes the api is on port **8080**, not `8088` like it was under compose.)
+- Headlamp `30090` → **`localhost:8090`** — open it in a browser and log in with the token from `make dashboard`, which mints a short-lived (24h) service-account token.
+
+### Health probes
+
+Both Node services now expose `/healthz` and `/readyz` (`services/*/src/server.js`), and the manifests point the liveness/readiness probes at them. The split matters:
+
+- **Liveness** (`/healthz`) only answers "is the process up?" — it deliberately does **not** touch Postgres. If the database blips, we want Kubernetes to keep the pod and let it retry, not kill and restart it.
+- **Readiness** (`/readyz`) decides whether the pod should receive traffic. The classifier has no downstream dependency, so ready == alive. The message-api's readiness actually pings Postgres and returns 503 if it can't reach it, so a pod is only sent requests once it can really serve them.
 
 # If there is time
 
