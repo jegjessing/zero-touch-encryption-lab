@@ -351,6 +351,45 @@ resources:
 
 ---
 
+## 8. Autoscaling — HPA (+ metrics-server)
+
+**HPA scales replicas out/in** on a metric (CPU here). It needs **metrics-server**
+running, and a **CPU request** on the pods to compute a percentage against.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: classifier, namespace: zerotouch-lab }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: classifier }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 50 } }
+  behavior:
+    scaleUp: { stabilizationWindowSeconds: 0 } # react fast (demo)
+    scaleDown: { stabilizationWindowSeconds: 60 } # cool down before shrinking (default 300)
+```
+
+- **The math:** `desiredReplicas = ceil( currentReplicas × currentCPU / targetCPU )`.
+  CPU is a **% of the pod's `request`** — request `25m` + target `50%` ⇒ aims to
+  keep each pod near `12.5m`, adding pods above that and removing below.
+- **metrics-server on kind:** not shipped by default; install it and add
+  `--kubelet-insecure-tls` (kind's kubelet serving cert isn't signed by the
+  cluster CA, so the scrape otherwise fails). `make metrics` does both.
+- **Omit `replicas`** on a Deployment an HPA owns — otherwise every `kubectl apply`
+  resets the count and fights the autoscaler (§3).
+- ▶ **Drive it with load, not a sleep.** This lab runs a **k6** load test as an
+  in-cluster Job (`make load-test`) that hits the classifier Service directly over
+  cluster DNS; `make watch-hpa` shows `2 → N` live. `kubectl top pods` needs
+  metrics-server too — same dependency.
+- **HPA vs VPA vs cluster autoscaler:** HPA = more pods; **VPA** = bigger pods
+  (resize requests/limits); **cluster autoscaler** = more _nodes_ when pods won't
+  fit. **KEDA** extends the HPA to scale on queue depth / events, not just CPU.
+
+---
+
 ## 9. Storage & stateful workloads
 
 - **PV** = a piece of storage; **PVC** = a claim/request for one; **StorageClass**
@@ -448,8 +487,9 @@ securityContext: # pod- or container-level hardening
 - Build image → push to registry (GHCR/ACR) tagged with the git SHA (not just
   `latest`, so deploys are pinned and rollbackable).
 - **e2e in CI:** `helm/kind-action` stands up a real cluster, `kind load` images,
-  `kubectl apply`, `rollout status`, run a smoke test. This repo does exactly this,
-  plus asserts the HPA scales up.
+  `kubectl apply`, `rollout status`, run a smoke test. This repo does exactly this.
+  (The HPA + k6 load test run locally via `make autoscale` / `make load-test`, not
+  in CI yet.)
 - Templating: **Kustomize** (overlays per env, `kubectl -k`) or **Helm** (charts +
   values). Progressive delivery: Argo CD / Flux (GitOps), blue-green / canary.
 
@@ -485,5 +525,6 @@ on AKS). It validates, calls **classifier** over cluster DNS (`classifier:8081`)
 which scores the text. If sensitive, message-api encrypts the body (AES-256-GCM,
 key from a Secret / Key Vault) and stores ciphertext in **Postgres** (PVC-backed).
 Each service has liveness (restart-if-wedged) + readiness (route-only-when-ready)
-probes; the classifier is **HPA-autoscaled** on CPU. CI stands up a kind cluster
-and proves the whole thing end-to-end on every push.
+probes; the classifier is **HPA-autoscaled** on CPU, driven locally by a k6 load
+test. CI stands up a kind cluster and proves the request path end-to-end (smoke
+test) on every push.

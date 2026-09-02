@@ -1,0 +1,62 @@
+# Runs the k6 load test as an in-cluster Job. Applied on demand by
+# `make load-test`, never as part of a normal deploy.
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-script
+  namespace: zerotouch-lab
+data:
+  classify-load.js: |
+    import http from "k6/http";
+    import { check } from "k6";
+
+    export const options = {
+      stages: [
+        { duration: "15s", target: 50 },
+        { duration: "75s", target: 50 },
+        { duration: "10s", target: 0 },
+      ],
+      thresholds: {
+        http_req_failed: ["rate<0.01"],
+      },
+    };
+
+    const URL = "http://classifier.zerotouch-lab.svc.cluster.local:8081/classify";
+    const PARAMS = { headers: { "Content-Type": "application/json" } };
+    const BODY = JSON.stringify({
+      text: "Hej, din klient har CPR 010203-1234 og IBAN DK5000400440116243, ring 20304050.",
+    });
+
+    export default function () {
+      const res = http.post(URL, BODY, PARAMS);
+      check(res, {
+        "status is 200": (r) => r.status === 200,
+        "flagged sensitive": (r) => r.status === 200 && r.json("sensitive") === true,
+      });
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load
+  namespace: zerotouch-lab
+spec:
+  backoffLimit: 0 # a failed load test should not silently retry
+  template:
+    metadata:
+      labels:
+        app: k6-load
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          args: ["run", "/scripts/classify-load.js"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: k6-script

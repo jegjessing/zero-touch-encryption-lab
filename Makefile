@@ -5,7 +5,7 @@ CLUSTER := zerotouch-lab
 KUBECTL := kubectl --context kind-$(CLUSTER)
 NS := zerotouch-lab
 
-up: cluster build load deploy wait ingress test## full setup from scratch
+up: cluster build load metrics deploy wait ingress test ## full setup from scratch (autoscaling + ingress)
 
 cluster: ## create the kind cluster (idempotent)
 	@kind get clusters | grep -qx $(CLUSTER) || kind create cluster --config kind-config.yaml
@@ -27,6 +27,25 @@ wait: ## wait for every deployment to become available
 	$(KUBECTL) -n $(NS) rollout status deploy/classifier  --timeout=120s
 	$(KUBECTL) -n $(NS) rollout status deploy/message-api --timeout=120s
 	$(KUBECTL) -n $(NS) rollout status deploy/headlamp    --timeout=120s
+
+metrics: ## install metrics-server (HPA needs it) + patch it for kind's certs
+	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
+	$(KUBECTL) -n kube-system patch deployment metrics-server --type=json \
+	  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+	$(KUBECTL) -n kube-system rollout status deploy/metrics-server --timeout=120s
+
+autoscale: metrics ## install metrics-server and apply the classifier HPA
+	$(KUBECTL) apply -f k8s/60-classifier-hpa.yaml
+	@echo "HPA applied. Watch it with 'make watch-hpa' and drive load with 'make load-test'."
+
+load-test: ## run the k6 load Job and stream its output (watch scale-up in another shell)
+	$(KUBECTL) -n $(NS) delete job k6-load --ignore-not-found
+	$(KUBECTL) apply -f load/k6-load.yaml
+	$(KUBECTL) -n $(NS) wait --for=condition=ready pod -l app=k6-load --timeout=60s
+	$(KUBECTL) -n $(NS) logs -f job/k6-load
+
+watch-hpa: ## live view of the HPA target and the classifier pods scaling
+	$(KUBECTL) -n $(NS) get hpa classifier pods -l app=classifier -w
 
 dashboard: ## print the Headlamp login token and the URL to open
 	@echo "Open http://localhost:8090 and paste this token to log in:"

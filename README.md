@@ -161,6 +161,16 @@ The message-api now sits behind a real **Ingress** instead of only a raw NodePor
 
 Because there's no real DNS for `api.zerotouch.local`, the requests carry an explicit `Host:` header (or you can add it to `/etc/hosts`). `-k` is needed because the cert is self-signed. `make ingress-test` runs `scripts/ingress-smoke.sh`, which proves all three things end-to-end: HTTPS health works through the Ingress, plain HTTP redirects, and a full `POST /messages` round-trips over TLS.
 
+### Autoscaling under load (HPA + k6)
+
+The classifier is stateless and CPU-bound (regex + weighting), which makes it the natural thing to scale horizontally. Instead of pinning it at a fixed replica count, a **HorizontalPodAutoscaler** (`k8s/60-classifier-hpa.yaml`) owns the count: min 2, max 8, target **50% CPU** of each pod's request. The classifier Deployment deliberately has **no `replicas` field** — that would fight the HPA, resetting the count on every `kubectl apply`.
+
+For the HPA to see CPU it needs **metrics-server**, which kind doesn't ship. `make metrics` installs it and patches in `--kubelet-insecure-tls` (kind's kubelet serving certs aren't signed by the cluster CA, so metrics-server otherwise refuses to scrape). It's wired into `make up`, so a fresh cluster comes up already autoscaling. Without it the HPA just sits at `TARGETS <unknown>` and never scales — the CPU **request** on the classifier (`25m`) is what the percentage is computed against, so that request is what makes autoscaling possible at all.
+
+To actually drive it there's a **[k6](https://k6.io/) load test** (`load/classify-load.js`) that ramps to 50 virtual users and holds for 75s, hammering `POST /classify` with a sensitive Danish message so the regex path does real work. It runs as an **in-cluster Job** (`load/k6-load.yaml`, `make load-test`) that talks straight to the classifier Service over cluster DNS (`classifier.zerotouch-lab.svc.cluster.local:8081`) — so it loads the classifier directly, without going through message-api or writing rows to Postgres. `make watch-hpa` in another shell shows the scale-up live.
+
+Running it end-to-end: CPU spiked to ~40× the target and the HPA took the classifier from **2 → 8 replicas** within about 30s, served **3.8M requests at ~38k req/s with 0 failures** (p95 ~2ms), then scaled back down to 2 once the load stopped (a 60s scale-down stabilization window, tightened from the 300s default so the lab settles quickly). The scale-up window is `0s` so it reacts fast enough to see inside a short test.
+
 ## Step 4
 
 Add some sort of AI layer to do the classification?

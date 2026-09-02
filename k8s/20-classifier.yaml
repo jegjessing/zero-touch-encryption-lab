@@ -4,7 +4,9 @@ metadata:
   name: classifier
   namespace: zerotouch-lab
 spec:
-  replicas: 2 # stateless, so we can run several and let the Service load-balance
+  # No replicas field on purpose: the HorizontalPodAutoscaler in
+  # 60-classifier-hpa.yaml owns the replica count (min 2). Hardcoding it here
+  # would let every `kubectl apply` reset the count and fight the autoscaler.
   selector:
     matchLabels:
       app: classifier

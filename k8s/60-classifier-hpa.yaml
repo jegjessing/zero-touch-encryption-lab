@@ -1,0 +1,39 @@
+# Horizontal Pod Autoscaler for the classifier.
+#
+# How it works: every ~15s the HPA controller reads each classifier pod's CPU
+# from metrics-server, averages it, and computes a desired replica count with
+#     desiredReplicas = ceil( currentReplicas * (currentCPU / targetCPU) )
+# CPU is expressed as a percentage of the pod's *request* (25m, set in
+# 20-classifier.yaml) — so at averageUtilization: 50 the HPA aims to keep every
+# pod at ~12.5m of CPU, adding pods when load pushes above that and removing
+# them when it drops.
+#
+# Needs metrics-server in the cluster (`make metrics`); without it the HPA shows
+# TARGETS <unknown> and never scales.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: classifier
+  namespace: zerotouch-lab
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: classifier
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      # React fast so the demo scales visibly within a load test.
+      stabilizationWindowSeconds: 0
+    scaleDown:
+      # Cool down after 60s of calm instead of the 300s default, so the lab
+      # returns to 2 replicas soon after the load test ends.
+      stabilizationWindowSeconds: 60
